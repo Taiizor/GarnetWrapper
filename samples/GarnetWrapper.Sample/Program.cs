@@ -1,24 +1,18 @@
-using GarnetWrapper;
-using GarnetWrapper.Options;
-using GarnetWrapper.Resilience;
-using GarnetWrapper.Metrics;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using GarnetWrapper.Extensions;
 using GarnetWrapper.Interfaces;
 
-var builder = Host.CreateDefaultBuilder(args)
+IHostBuilder builder = Host.CreateDefaultBuilder(args)
     .ConfigureServices((hostContext, services) =>
     {
         // Add Garnet services
-        services.AddGarnetCache(options =>
+        services.AddGarnet(options =>
         {
-            options.Endpoints = new[] { "localhost:6379" };
-            options.DefaultDatabase = 0;
-            options.EnableCompression = true;
             options.DefaultExpiry = TimeSpan.FromMinutes(30);
-            options.MaxRetries = 3;
+            options.ConnectionString = "localhost:6379";
+            options.EnableCompression = true;
             options.RetryTimeout = 1000;
+            options.MaxRetries = 3;
+            options.DatabaseId = 0;
         });
 
         // Add sample services
@@ -52,29 +46,29 @@ public class CacheExampleService : BackgroundService
         {
             // Basic cache operations
             await _cache.SetAsync("user:1", new User { Id = 1, Name = "John Doe", Email = "john@example.com" });
-            var user = await _cache.GetAsync<User>("user:1");
+            User user = await _cache.GetAsync<User>("user:1");
             _logger.LogInformation("Retrieved user: {Name}", user?.Name);
 
             // Batch operations
-            var users = Enumerable.Range(1, 10)
+            List<User> users = Enumerable.Range(1, 10)
                 .Select(i => new User { Id = i, Name = $"User {i}", Email = $"user{i}@example.com" })
                 .ToList();
 
-            foreach (var u in users)
+            foreach (User? u in users)
             {
                 await _cache.SetAsync($"user:{u.Id}", u);
             }
 
             // Pattern scanning
-            await foreach (var key in _cache.ScanAsync("user:*"))
+            await foreach (string? key in _cache.ScanAsync("user:*"))
             {
-                var cachedUser = await _cache.GetAsync<User>(key);
+                User cachedUser = await _cache.GetAsync<User>(key);
                 _logger.LogInformation("Found user: {Name}", cachedUser?.Name);
             }
 
             // Expiration
             await _cache.SetAsync("temp:key", "temporary value", TimeSpan.FromSeconds(5));
-            var exists = await _cache.ExistsAsync("temp:key");
+            bool exists = await _cache.ExistsAsync("temp:key");
             _logger.LogInformation("Temporary key exists: {Exists}", exists);
 
             await Task.Delay(6000); // Wait for expiration
@@ -85,7 +79,7 @@ public class CacheExampleService : BackgroundService
             await _cache.SetAsync("counter", "0");
             for (int i = 0; i < 5; i++)
             {
-                var value = await _cache.IncrementAsync("counter");
+                long value = await _cache.IncrementAsync("counter");
                 _logger.LogInformation("Counter value: {Value}", value);
             }
         }
@@ -118,7 +112,7 @@ public class DistributedLockExampleService : BackgroundService
             await _cache.SetAsync(counterKey, 0);
 
             // Simulate multiple processes trying to increment the counter
-            var tasks = new List<Task>();
+            List<Task> tasks = new();
             for (int i = 0; i < 5; i++)
             {
                 tasks.Add(Task.Run(async () =>
@@ -144,7 +138,7 @@ public class DistributedLockExampleService : BackgroundService
 
             await Task.WhenAll(tasks);
 
-            var finalCount = await _cache.GetAsync<int>(counterKey);
+            int finalCount = await _cache.GetAsync<int>(counterKey);
             _logger.LogInformation("Final counter value with distributed lock: {Value}", finalCount);
         }
         catch (Exception ex)
@@ -158,7 +152,7 @@ public class MetricsExampleService : BackgroundService
 {
     private readonly IGarnetClient _cache;
     private readonly ILogger<MetricsExampleService> _logger;
-    private readonly Random _random = new Random();
+    private readonly Random _random = new();
 
     public MetricsExampleService(IGarnetClient cache, ILogger<MetricsExampleService> logger)
     {
@@ -173,8 +167,8 @@ public class MetricsExampleService : BackgroundService
             while (!stoppingToken.IsCancellationRequested)
             {
                 // Simulate random cache operations
-                var key = $"metrics:key:{_random.Next(1, 11)}";
-                var value = $"value-{Guid.NewGuid()}";
+                string key = $"metrics:key:{_random.Next(1, 11)}";
+                string value = $"value-{Guid.NewGuid()}";
 
                 // Mix of hits and misses
                 if (_random.Next(2) == 0)

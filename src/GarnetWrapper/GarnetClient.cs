@@ -1,5 +1,6 @@
 namespace GarnetWrapper;
 using GarnetWrapper.Interfaces;
+using GarnetWrapper.Logging;
 using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
@@ -7,12 +8,11 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Collections.Concurrent;
-using System.Diagnostics;
-using GarnetWrapper.Logging;
 
 /// <summary>
 /// A high-performance distributed caching client for Garnet cache-store
@@ -52,7 +52,7 @@ public class GarnetClient : IGarnetClient
         _locks = new ConcurrentDictionary<string, SemaphoreSlim>();
         _memoryStreamPool = new ObjectPool<MemoryStream>(() => new MemoryStream(), 50);
         _stopwatch = new Stopwatch();
-        
+
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -97,8 +97,8 @@ public class GarnetClient : IGarnetClient
     public async Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null)
     {
         _stopwatch.Restart();
-        using var _ = _metrics.MeasureOperation("set");
-        
+        using IDisposable _ = _metrics.MeasureOperation("set");
+
         return await _circuitBreaker.ExecuteAsync(async () =>
         {
             try
@@ -111,12 +111,12 @@ public class GarnetClient : IGarnetClient
 
                 expiry ??= _options.DefaultExpiry;
                 bool result = await _db.StringSetAsync(key, serialized, expiry);
-                
+
                 _metrics.RecordOperation("set_success");
                 _stopwatch.Stop();
                 _logger.LogCacheOperation("Set", key, result, _stopwatch.ElapsedMilliseconds);
                 _logger.LogPerformanceWarning("Set", key, _stopwatch.ElapsedMilliseconds, 100);
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -137,8 +137,8 @@ public class GarnetClient : IGarnetClient
     public async Task<T> GetAsync<T>(string key)
     {
         _stopwatch.Restart();
-        using var _ = _metrics.MeasureOperation("get");
-        
+        using IDisposable _ = _metrics.MeasureOperation("get");
+
         return await _circuitBreaker.ExecuteAsync(async () =>
         {
             try
@@ -159,11 +159,11 @@ public class GarnetClient : IGarnetClient
                     stringValue = await DecompressAsync(stringValue);
                 }
 
-                var result = JsonSerializer.Deserialize<T>(stringValue, _jsonOptions);
+                T result = JsonSerializer.Deserialize<T>(stringValue, _jsonOptions);
                 _stopwatch.Stop();
                 _logger.LogCacheOperation("Get", key, true, _stopwatch.ElapsedMilliseconds);
                 _logger.LogPerformanceWarning("Get", key, _stopwatch.ElapsedMilliseconds, 50);
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -262,9 +262,9 @@ public class GarnetClient : IGarnetClient
     /// <returns>True if the lock was acquired successfully</returns>
     public async Task<bool> LockAsync(string key, TimeSpan expiryTime)
     {
-        var lockInstance = _locks.GetOrAdd(key, k => new SemaphoreSlim(1, 1));
+        SemaphoreSlim lockInstance = _locks.GetOrAdd(key, k => new SemaphoreSlim(1, 1));
         _stopwatch.Restart();
-        
+
         try
         {
             if (await lockInstance.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -275,7 +275,7 @@ public class GarnetClient : IGarnetClient
                 _logger.LogCacheOperation("Lock", key, result, _stopwatch.ElapsedMilliseconds);
                 return result;
             }
-            
+
             _stopwatch.Stop();
             _logger.LogCacheOperation("Lock", key, false, _stopwatch.ElapsedMilliseconds);
             return false;
@@ -316,15 +316,15 @@ public class GarnetClient : IGarnetClient
     public async Task<IEnumerable<string>> GetAllKeysAsync(string pattern = "*")
     {
         _stopwatch.Restart();
-        var keys = new List<string>();
-        
+        List<string> keys = new();
+
         try
         {
-            await foreach (var key in ScanAsync(pattern))
+            await foreach (string key in ScanAsync(pattern))
             {
                 keys.Add(key);
             }
-            
+
             _stopwatch.Stop();
             _logger.LogBatchOperation("GetAllKeys", keys.Count, keys.Count, 0, _stopwatch.ElapsedMilliseconds);
             return keys;
@@ -339,14 +339,14 @@ public class GarnetClient : IGarnetClient
     public async Task<IDictionary<string, T>> GetAllAsync<T>(IEnumerable<string> keys)
     {
         _stopwatch.Restart();
-        var result = new Dictionary<string, T>();
-        var failureCount = 0;
-        
-        foreach (var key in keys)
+        Dictionary<string, T> result = new();
+        int failureCount = 0;
+
+        foreach (string key in keys)
         {
             try
             {
-                var value = await GetAsync<T>(key);
+                T value = await GetAsync<T>(key);
                 if (value != null)
                 {
                     result[key] = value;
@@ -357,7 +357,7 @@ public class GarnetClient : IGarnetClient
                 failureCount++;
             }
         }
-        
+
         _stopwatch.Stop();
         _logger.LogBatchOperation("GetAll", keys.Count(), result.Count, failureCount, _stopwatch.ElapsedMilliseconds);
         return result;
@@ -365,12 +365,12 @@ public class GarnetClient : IGarnetClient
 
     private async Task<string> CompressAsync(string data)
     {
-        var memoryStream = _memoryStreamPool.Get();
+        MemoryStream memoryStream = _memoryStreamPool.Get();
         try
         {
             memoryStream.SetLength(0);
-            using (var gzipStream = new GZipStream(memoryStream, CompressionLevel.Optimal, true))
-            using (var writer = new StreamWriter(gzipStream))
+            using (GZipStream gzipStream = new(memoryStream, CompressionLevel.Optimal, true))
+            using (StreamWriter writer = new(gzipStream))
             {
                 await writer.WriteAsync(data);
             }
@@ -389,7 +389,7 @@ public class GarnetClient : IGarnetClient
 
     private async Task<string> DecompressAsync(string compressedData)
     {
-        var memoryStream = _memoryStreamPool.Get();
+        MemoryStream memoryStream = _memoryStreamPool.Get();
         try
         {
             memoryStream.SetLength(0);
@@ -397,8 +397,8 @@ public class GarnetClient : IGarnetClient
             await memoryStream.WriteAsync(data, 0, data.Length);
             memoryStream.Position = 0;
 
-            using var gzipStream = new GZipStream(memoryStream, CompressionMode.Decompress);
-            using var reader = new StreamReader(gzipStream);
+            using GZipStream gzipStream = new(memoryStream, CompressionMode.Decompress);
+            using StreamReader reader = new(gzipStream);
             return await reader.ReadToEndAsync();
         }
         catch (Exception ex)
@@ -414,7 +414,7 @@ public class GarnetClient : IGarnetClient
 
     public void Dispose()
     {
-        foreach (var lockItem in _locks.Values)
+        foreach (SemaphoreSlim lockItem in _locks.Values)
         {
             lockItem.Dispose();
         }
@@ -438,7 +438,10 @@ internal class ObjectPool<T>
         _objects = new ConcurrentBag<T>();
     }
 
-    public T Get() => _objects.TryTake(out T item) ? item : _objectGenerator();
+    public T Get()
+    {
+        return _objects.TryTake(out T item) ? item : _objectGenerator();
+    }
 
     public void Return(T item)
     {

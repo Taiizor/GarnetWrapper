@@ -1,12 +1,11 @@
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Running;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using BenchmarkDotNet.Running;
+using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
-using GarnetWrapper.Metrics;
+using Microsoft.Extensions.Logging;
 using System.Text;
 
 namespace GarnetWrapper.Benchmarks;
@@ -38,7 +37,7 @@ public class GarnetBenchmarks
     public GarnetBenchmarks()
     {
         // Create a large test value
-        var sb = new StringBuilder();
+        StringBuilder sb = new();
         for (int i = 0; i < 1000; i++)
         {
             sb.Append($"Value{i},");
@@ -60,9 +59,9 @@ public class GarnetBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-        var logger = loggerFactory.CreateLogger<GarnetClient>();
-        var metrics = new GarnetMetrics();
+        ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        ILogger<GarnetClient> logger = loggerFactory.CreateLogger<GarnetClient>();
+        GarnetMetrics metrics = new();
 
         // Setup normal client
         var options = Options.Create(new GarnetOptions
@@ -72,7 +71,7 @@ public class GarnetBenchmarks
             EnableCompression = false,
             DefaultExpiry = TimeSpan.FromMinutes(5)
         });
-        var circuitBreaker = new GarnetCircuitBreaker(options);
+        GarnetCircuitBreaker circuitBreaker = new(options);
         _client = new GarnetClient(options, logger, circuitBreaker, metrics);
 
         // Setup compressed client
@@ -83,7 +82,7 @@ public class GarnetBenchmarks
             EnableCompression = true,
             DefaultExpiry = TimeSpan.FromMinutes(5)
         });
-        var compressedCircuitBreaker = new GarnetCircuitBreaker(compressedOptions);
+        GarnetCircuitBreaker compressedCircuitBreaker = new(compressedOptions);
         _compressedClient = new GarnetClient(compressedOptions, logger, compressedCircuitBreaker, metrics);
     }
 
@@ -138,10 +137,10 @@ public class GarnetBenchmarks
     [Benchmark(Description = "Concurrent Operations"), BenchmarkCategory("Concurrency")]
     public async Task ConcurrentOperationsAsync()
     {
-        var tasks = new List<Task>();
+        List<Task> tasks = new();
         for (int i = 0; i < 100; i++)
         {
-            var key = $"{TestKey}:concurrent:{i}";
+            string key = $"{TestKey}:concurrent:{i}";
             tasks.Add(_client.SetAsync(key, i));
             tasks.Add(_client.GetAsync<int>(key));
         }
@@ -189,4 +188,4 @@ public class Program
     {
         BenchmarkRunner.Run<GarnetBenchmarks>();
     }
-} 
+}

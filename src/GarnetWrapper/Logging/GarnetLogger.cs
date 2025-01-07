@@ -23,10 +23,10 @@ public class GarnetLogger
     /// </summary>
     public void LogError(Exception ex, string message, params object[] args)
     {
-        var key = $"{message}_{string.Join("_", args)}";
-        var now = DateTime.UtcNow;
+        string key = $"{message}_{string.Join("_", args)}";
+        DateTime now = DateTime.UtcNow;
 
-        var (lastLog, count) = _rateLimiter.GetOrAdd(key, _ => (now, 0));
+        (DateTime lastLog, int count) = _rateLimiter.GetOrAdd(key, _ => (now, 0));
 
         if (now - lastLog > _rateLimitWindow)
         {
@@ -51,8 +51,8 @@ public class GarnetLogger
     /// </summary>
     public void LogCacheOperation(string operation, string key, bool success, long elapsedMilliseconds)
     {
-        var level = success ? LogLevel.Debug : LogLevel.Warning;
-        _logger.Log(level, 
+        LogLevel level = success ? LogLevel.Debug : LogLevel.Warning;
+        _logger.Log(level,
             "Cache {Operation} - Key: {Key}, Success: {Success}, Duration: {Duration}ms",
             operation, key, success, elapsedMilliseconds);
     }
@@ -62,7 +62,7 @@ public class GarnetLogger
     /// </summary>
     public void LogConnectionState(string endpoint, string state, string details = null)
     {
-        var level = state == "Connected" ? LogLevel.Information : LogLevel.Warning;
+        LogLevel level = state == "Connected" ? LogLevel.Information : LogLevel.Warning;
         _logger.Log(level,
             "Redis connection {State} - Endpoint: {Endpoint}{Details}",
             state, endpoint, details != null ? $", Details: {details}" : "");
@@ -116,7 +116,7 @@ public class GarnetLogger
     /// </summary>
     public void LogBatchOperation(string operation, int totalItems, int successCount, int failureCount, long elapsedMilliseconds)
     {
-        var level = failureCount == 0 ? LogLevel.Information : LogLevel.Warning;
+        LogLevel level = failureCount == 0 ? LogLevel.Information : LogLevel.Warning;
         _logger.Log(level,
             "Batch {Operation} completed - Total: {Total}, Success: {Success}, Failed: {Failed}, Duration: {Duration}ms",
             operation, totalItems, successCount, failureCount, elapsedMilliseconds);
@@ -131,4 +131,4 @@ public class GarnetLogger
             "Security event detected - Type: {EventType}, Details: {Details}",
             eventType, details);
     }
-} 
+}

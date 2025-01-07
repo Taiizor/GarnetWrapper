@@ -2,8 +2,6 @@ using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Xunit;
 
 namespace GarnetWrapper.Tests.Integration;
 
@@ -27,7 +25,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
             RetryTimeout = 1000
         });
 
-        var loggerFactory = LoggerFactory.Create(builder =>
+        ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
         {
             builder.AddConsole();
             builder.AddDebug();
@@ -57,7 +55,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         // Set a value
         await _client.SetAsync("integration-test:key1", "value1");
-        
+
         // Verify it exists
         bool exists = await _client.ExistsAsync("integration-test:key1");
         Assert.True(exists);
@@ -68,10 +66,10 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
 
         // Set expiry
         await _client.SetExpiryAsync("integration-test:key1", TimeSpan.FromSeconds(1));
-        
+
         // Wait for expiry
         await Task.Delay(1500);
-        
+
         // Verify key has expired
         exists = await _client.ExistsAsync("integration-test:key1");
         Assert.False(exists);
@@ -91,7 +89,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
 
         // Act
         await _client.SetAsync("integration-test:compressed", largeObject);
-        var result = await _client.GetAsync<dynamic>("integration-test:compressed");
+        dynamic result = await _client.GetAsync<dynamic>("integration-test:compressed");
 
         // Assert
         Assert.NotNull(result);
@@ -104,14 +102,14 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         // Arrange
         int failureCount = 0;
-        
+
         // Act & Assert
         for (int i = 0; i < 10; i++)
         {
             try
             {
                 // Try to access a non-existent Redis instance
-                var badClient = new GarnetClient(
+                GarnetClient badClient = new(
                     Options.Create(new GarnetOptions
                     {
                         Endpoints = new[] { "nonexistent:6379" },
@@ -139,15 +137,15 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         // Arrange
         const int concurrentTasks = 100;
-        var tasks = new List<Task>();
+        List<Task> tasks = new();
 
         // Act
         for (int i = 0; i < concurrentTasks; i++)
         {
-            var task = Task.Run(async () =>
+            Task task = Task.Run(async () =>
             {
                 await _client.SetAsync($"integration-test:concurrent:{i}", i);
-                var value = await _client.GetAsync<int>($"integration-test:concurrent:{i}");
+                int value = await _client.GetAsync<int>($"integration-test:concurrent:{i}");
                 Assert.Equal(i, value);
             });
             tasks.Add(task);
@@ -156,8 +154,8 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         await Task.WhenAll(tasks);
 
         // Assert
-        var keys = new List<string>();
-        await foreach (var key in _client.ScanAsync("integration-test:concurrent:*"))
+        List<string> keys = new();
+        await foreach (string? key in _client.ScanAsync("integration-test:concurrent:*"))
         {
             keys.Add(key);
         }
@@ -172,8 +170,8 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         const string counterKey = "integration-test:counter";
         await _client.SetAsync(counterKey, 0);
 
-        var tasks = new List<Task>();
-        var random = new Random();
+        List<Task> tasks = new();
+        Random random = new();
 
         // Act
         for (int i = 0; i < 10; i++)
@@ -189,7 +187,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
                         {
                             // Simulate some work
                             await Task.Delay(random.Next(10, 50));
-                            
+
                             // Increment counter
                             await _client.IncrementAsync(counterKey);
                         }
@@ -206,7 +204,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         await Task.WhenAll(tasks);
 
         // Assert
-        var finalCount = await _client.GetAsync<int>(counterKey);
+        int finalCount = await _client.GetAsync<int>(counterKey);
         Assert.Equal(100, finalCount); // 10 tasks * 10 increments each
     }
-} 
+}

@@ -1,11 +1,9 @@
+using GarnetWrapper.Metrics;
+using GarnetWrapper.Options;
+using GarnetWrapper.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
-using Xunit;
-using System.Text.Json;
-using GarnetWrapper.Options;
-using GarnetWrapper.Resilience;
-using GarnetWrapper.Metrics;
 
 namespace GarnetWrapper.Tests;
 
@@ -62,11 +60,11 @@ public class GarnetClientTests
         // Arrange
         const string key = "test-key";
         const string value = "test-value";
-        var expiry = TimeSpan.FromMinutes(10);
+        TimeSpan expiry = TimeSpan.FromMinutes(10);
 
         // Act
         await _client.SetAsync(key, value, expiry);
-        var ttl = await _client.GetTimeToLiveAsync(key);
+        TimeSpan? ttl = await _client.GetTimeToLiveAsync(key);
 
         // Assert
         Assert.NotNull(ttl);
@@ -113,7 +111,7 @@ public class GarnetClientTests
             EnableCompression = true
         });
 
-        var client = new GarnetClient(
+        GarnetClient client = new(
             _optionsMock.Object,
             _loggerMock.Object,
             _circuitBreakerMock.Object,
@@ -194,7 +192,7 @@ public class GarnetClientTests
     {
         // Arrange
         const string key = "lock-key";
-        var expiry = TimeSpan.FromSeconds(30);
+        TimeSpan expiry = TimeSpan.FromSeconds(30);
 
         // Act
         bool result = await _client.LockAsync(key, expiry);
@@ -212,8 +210,8 @@ public class GarnetClientTests
         await _client.SetAsync("other:1", "value3");
 
         // Act
-        var keys = new List<string>();
-        await foreach (var key in _client.ScanAsync("test:*"))
+        List<string> keys = new();
+        await foreach (string? key in _client.ScanAsync("test:*"))
         {
             keys.Add(key);
         }
@@ -228,7 +226,7 @@ public class GarnetClientTests
     public async Task SetAsync_WithComplexObject_ShouldSerializeAndDeserialize()
     {
         // Arrange
-        var testObject = new TestObject
+        TestObject testObject = new()
         {
             Id = 1,
             Name = "Test",
@@ -237,7 +235,7 @@ public class GarnetClientTests
 
         // Act
         await _client.SetAsync("complex-object", testObject);
-        var result = await _client.GetAsync<TestObject>("complex-object");
+        TestObject result = await _client.GetAsync<TestObject>("complex-object");
 
         // Assert
         Assert.NotNull(result);
@@ -252,4 +250,4 @@ public class TestObject
     public int Id { get; set; }
     public string Name { get; set; }
     public DateTime CreatedAt { get; set; }
-} 
+}
