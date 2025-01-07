@@ -158,6 +158,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         // Arrange
         int failureCount = 0;
+        int successCount = 0;
         var badOptions = new OptionsWrapper<GarnetOptions>(new GarnetOptions
         {
             ConnectionString = "nonexistent:6379",
@@ -167,12 +168,14 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
             CircuitBreaker = new CircuitBreakerOptions
             {
                 FailureThreshold = 2, // 2 hatadan sonra devre kesici açılsın
-                BreakDuration = TimeSpan.FromSeconds(1),
+                BreakDuration = TimeSpan.FromSeconds(1), // 1 saniye sonra yarı-açık duruma geç
                 MinimumThroughput = 1
             }
         });
 
-        ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        ILoggerFactory loggerFactory = LoggerFactory.Create(builder => 
+            builder.AddConsole().SetMinimumLevel(LogLevel.Debug));
+        
         ILogger<GarnetClient> badLogger = loggerFactory.CreateLogger<GarnetClient>();
         ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
         IGarnetCircuitBreaker badCircuitBreaker = new GarnetCircuitBreaker(badOptions, circuitBreakerLogger);
@@ -185,18 +188,27 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         {
             try
             {
-                await badClient.SetAsync("test-key", "test-value");
-                await Task.Delay(100); // Kısa bekleme
+                await badClient.SetAsync($"test-key-{i}", "test-value");
+                successCount++;
             }
-            catch
+            catch (CircuitBreakerOpenException)
             {
+                // Bu beklenen bir durum, devre kesici açık
                 failureCount++;
             }
+            catch (Exception)
+            {
+                // Bağlantı hatası
+                failureCount++;
+            }
+
+            // Devre kesicinin durumunu değiştirmesi için biraz bekle
+            await Task.Delay(200);
         }
 
         // Assert
-        Assert.True(failureCount > 0, "En az bir hata olmalı");
-        Assert.True(failureCount < 10, "Devre kesici devreye girmeli ve tüm istekler hata vermemeli");
+        Assert.True(failureCount >= 2, $"En az 2 hata olmalı (Actual: {failureCount})");
+        Assert.True(failureCount < 10, $"Tüm istekler hata vermemeli (Failures: {failureCount}, Successes: {successCount})");
     }
 
     [Fact]
@@ -234,7 +246,10 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         // Arrange
         const string lockKey = "integration-test:lock";
         const string counterKey = "integration-test:counter";
-        await _client.SetAsync(counterKey, 0L);
+        
+        // Önce anahtarı sil, sonra long olarak başlat
+        await _client.DeleteAsync(counterKey);
+        await _client.SetAsync(counterKey, "0");
 
         List<Task> tasks = new();
         Random random = new();
@@ -270,7 +285,8 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         await Task.WhenAll(tasks);
 
         // Assert
-        long finalCount = await _client.GetAsync<long>(counterKey);
+        string finalCountStr = await _client.GetAsync<string>(counterKey);
+        Assert.True(long.TryParse(finalCountStr, out long finalCount), "Counter should be a valid number");
         Assert.Equal(100L, finalCount); // 10 tasks * 10 increments each
     }
 }

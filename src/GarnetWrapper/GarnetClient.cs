@@ -322,10 +322,20 @@ public class GarnetClient : IGarnetClient
     public async IAsyncEnumerable<string> ScanAsync(string pattern)
     {
         IServer server = _connection.GetServer(_connection.GetEndPoints().First());
-        await foreach (RedisKey key in server.KeysAsync(pattern: pattern))
+        long cursor = 0;
+        do
         {
-            yield return key.ToString();
+            RedisResult result = await server.ExecuteAsync("SCAN", cursor.ToString(), "MATCH", pattern, "COUNT", "100");
+            RedisResult[] innerResult = (RedisResult[])result;
+            cursor = long.Parse((string)innerResult[0]);
+            RedisKey[] keys = (RedisKey[])innerResult[1];
+
+            foreach (RedisKey key in keys)
+            {
+                yield return key.ToString();
+            }
         }
+        while (cursor != 0);
     }
 
     public async Task<IEnumerable<string>> GetAllKeysAsync(string pattern = "*")
