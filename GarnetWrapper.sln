@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -9,6 +9,14 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{F5B7F0E1-7C3E-4D41-9D96-A518066C9556}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GarnetWrapper.Sample", "samples\GarnetWrapper.Sample\GarnetWrapper.Sample.csproj", "{C8A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{4715F46F-ACC7-4B0A-9378-7E11551C43D1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GarnetWrapper.Tests", "tests\GarnetWrapper.Tests\GarnetWrapper.Tests.csproj", "{25C499C0-4950-4F9F-B94F-EA88CC56ABBB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "benchmarks", "benchmarks", "{7A013AA6-6702-462A-A431-C1684D3BFBF6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GarnetWrapper.Benchmarks", "benchmarks\GarnetWrapper.Benchmarks\GarnetWrapper.Benchmarks.csproj", "{FC67E161-4241-43E9-BD31-299EA5543B54}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -24,6 +32,14 @@ Global
 		{C8A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C8A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C8A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{25C499C0-4950-4F9F-B94F-EA88CC56ABBB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{25C499C0-4950-4F9F-B94F-EA88CC56ABBB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{25C499C0-4950-4F9F-B94F-EA88CC56ABBB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{25C499C0-4950-4F9F-B94F-EA88CC56ABBB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC67E161-4241-43E9-BD31-299EA5543B54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC67E161-4241-43E9-BD31-299EA5543B54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC67E161-4241-43E9-BD31-299EA5543B54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC67E161-4241-43E9-BD31-299EA5543B54}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -31,5 +47,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{B7A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D} = {D396A2E9-C13F-4D41-9D96-A518066C9556}
 		{C8A0E5F2-8E8B-4C3E-8A5A-7B7E7B5C8E8D} = {F5B7F0E1-7C3E-4D41-9D96-A518066C9556}
+		{25C499C0-4950-4F9F-B94F-EA88CC56ABBB} = {4715F46F-ACC7-4B0A-9378-7E11551C43D1}
+		{FC67E161-4241-43E9-BD31-299EA5543B54} = {7A013AA6-6702-462A-A431-C1684D3BFBF6}
 	EndGlobalSection
-EndGlobal 
+EndGlobal
