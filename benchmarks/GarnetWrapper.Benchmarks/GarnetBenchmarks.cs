@@ -66,7 +66,7 @@ public class GarnetBenchmarks
         GarnetMetrics metrics = new();
 
         // Setup normal client
-        var options = new OptionsWrapper<GarnetOptions>(new GarnetOptions
+        OptionsWrapper<GarnetOptions> options = new(new GarnetOptions
         {
             ConnectionString = "localhost:6379",
             DatabaseId = 0,
@@ -77,7 +77,7 @@ public class GarnetBenchmarks
         _client = new GarnetClient(options, logger, circuitBreaker, metrics);
 
         // Setup compressed client
-        var compressedOptions = new OptionsWrapper<GarnetOptions>(new GarnetOptions
+        OptionsWrapper<GarnetOptions> compressedOptions = new(new GarnetOptions
         {
             ConnectionString = "localhost:6379",
             DatabaseId = 0,

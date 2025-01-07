@@ -2,6 +2,7 @@ using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GarnetWrapper.Tests.Integration;
 
@@ -15,10 +16,10 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
 
     public GarnetClientIntegrationTests()
     {
-        var options = Options.Create(new GarnetOptions
+        OptionsWrapper<GarnetOptions> options = new(new GarnetOptions
         {
-            Endpoints = new[] { "localhost:6379" },
-            DefaultDatabase = 1, // Use a different database for integration tests
+            ConnectionString = "localhost:6379",
+            DatabaseId = 1, // Use a different database for integration tests
             EnableCompression = true,
             DefaultExpiry = TimeSpan.FromMinutes(5),
             MaxRetries = 3,
@@ -32,7 +33,8 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         });
 
         _logger = loggerFactory.CreateLogger<GarnetClient>();
-        _circuitBreaker = new GarnetCircuitBreaker(options);
+        ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
+        _circuitBreaker = new GarnetCircuitBreaker(options, circuitBreakerLogger);
         _metrics = new GarnetMetrics();
         _client = new GarnetClient(options, _logger, _circuitBreaker, _metrics);
     }
@@ -109,17 +111,19 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
             try
             {
                 // Try to access a non-existent Redis instance
-                GarnetClient badClient = new(
-                    Options.Create(new GarnetOptions
-                    {
-                        Endpoints = new[] { "nonexistent:6379" },
-                        DefaultDatabase = 1
-                    }),
-                    _logger,
-                    _circuitBreaker,
-                    _metrics
-                );
+                OptionsWrapper<GarnetOptions> badOptions = new(new GarnetOptions
+                {
+                    ConnectionString = "nonexistent:6379",
+                    DatabaseId = 1
+                });
 
+                ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+                ILogger<GarnetClient> badLogger = loggerFactory.CreateLogger<GarnetClient>();
+                ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
+                GarnetCircuitBreaker badCircuitBreaker = new(badOptions, circuitBreakerLogger);
+                GarnetMetrics badMetrics = new();
+
+                GarnetClient badClient = new(badOptions, badLogger, badCircuitBreaker, badMetrics);
                 await badClient.SetAsync("integration-test:key", "value");
             }
             catch
@@ -142,13 +146,12 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         // Act
         for (int i = 0; i < concurrentTasks; i++)
         {
-            Task task = Task.Run(async () =>
+            tasks.Add(Task.Run(async () =>
             {
                 await _client.SetAsync($"integration-test:concurrent:{i}", i);
                 int value = await _client.GetAsync<int>($"integration-test:concurrent:{i}");
                 Assert.Equal(i, value);
-            });
-            tasks.Add(task);
+            }));
         }
 
         await Task.WhenAll(tasks);
