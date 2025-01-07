@@ -30,8 +30,10 @@ public class GarnetBenchmarks
         public Config()
         {
             AddJob(Job.Default
-                .WithIterationCount(100)
-                .WithWarmupCount(5));
+                .WithIterationCount(10)
+                .WithWarmupCount(2)
+                .WithInvocationCount(8)
+                .WithUnrollFactor(2));
         }
     }
 
