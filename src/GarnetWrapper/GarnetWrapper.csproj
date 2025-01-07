@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>disable</Nullable>
+		<PackageId>GarnetWrapper</PackageId>
+		<Version>1.0.1</Version>
+		<Authors>Taiizor</Authors>
+		<Company>Taiizor</Company>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<Description>A .NET wrapper for Microsoft Research's Garnet cache-store</Description>
+		<PackageTags>cache;redis;garnet;distributed-cache</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="../../README.md" Pack="true" PackagePath="/" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Polly" Version="8.5.0" />
+		<PackageReference Include="App.Metrics" Version="4.4.0-preview.0.4" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.0" />
+	</ItemGroup>
+
+</Project>

@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  garnet:
+    image: ghcr.io/microsoft/garnet:latest
+    container_name: garnet-cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - garnet-data:/data
+    command: >
+      --logger-level Trace
+      -m 4g
+      -i 64m
+      --bind 0.0.0.0
+      --port 6379
+    networks:
+      - garnet-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "garnet", "6379"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+        reservations:
+          memory: 2G
+
+  garnet-sample:
+    build:
+      context: .
+      dockerfile: samples/GarnetWrapper.Sample/Dockerfile
+    container_name: garnet-sample-app
+    ports:
+      - "8080:8080"
+    environment:
+      - Garnet__ConnectionString=garnet:6379
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - Garnet__RetryTimeout=5000
+      - Garnet__MaxRetries=3
+    depends_on:
+      garnet:
+        condition: service_healthy
+    networks:
+      - garnet-network
+
+volumes:
+  garnet-data:
+    driver: local
+
+networks:
+  garnet-network:
+    driver: bridge
