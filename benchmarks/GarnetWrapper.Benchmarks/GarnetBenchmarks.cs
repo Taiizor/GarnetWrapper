@@ -6,6 +6,7 @@ using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Text;
 
 namespace GarnetWrapper.Benchmarks;
@@ -61,28 +62,29 @@ public class GarnetBenchmarks
     {
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         ILogger<GarnetClient> logger = loggerFactory.CreateLogger<GarnetClient>();
+        ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
         GarnetMetrics metrics = new();
 
         // Setup normal client
-        var options = Options.Create(new GarnetOptions
+        var options = new OptionsWrapper<GarnetOptions>(new GarnetOptions
         {
-            Endpoints = new[] { "localhost:6379" },
-            DefaultDatabase = 0,
+            ConnectionString = "localhost:6379",
+            DatabaseId = 0,
             EnableCompression = false,
             DefaultExpiry = TimeSpan.FromMinutes(5)
         });
-        GarnetCircuitBreaker circuitBreaker = new(options);
+        GarnetCircuitBreaker circuitBreaker = new(options, circuitBreakerLogger);
         _client = new GarnetClient(options, logger, circuitBreaker, metrics);
 
         // Setup compressed client
-        var compressedOptions = Options.Create(new GarnetOptions
+        var compressedOptions = new OptionsWrapper<GarnetOptions>(new GarnetOptions
         {
-            Endpoints = new[] { "localhost:6379" },
-            DefaultDatabase = 0,
+            ConnectionString = "localhost:6379",
+            DatabaseId = 0,
             EnableCompression = true,
             DefaultExpiry = TimeSpan.FromMinutes(5)
         });
-        GarnetCircuitBreaker compressedCircuitBreaker = new(compressedOptions);
+        GarnetCircuitBreaker compressedCircuitBreaker = new(compressedOptions, circuitBreakerLogger);
         _compressedClient = new GarnetClient(compressedOptions, logger, compressedCircuitBreaker, metrics);
     }
 

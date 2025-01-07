@@ -1,36 +1,137 @@
+using GarnetWrapper.Options;
 using Microsoft.Extensions.Logging;
-using Polly;
-using Polly.CircuitBreaker;
-using StackExchange.Redis;
+using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 
-namespace GarnetWrapper.Resilience
+namespace GarnetWrapper.Resilience;
+
+/// <summary>
+/// Circuit breaker implementation for Garnet cache operations
+/// </summary>
+public class GarnetCircuitBreaker
 {
-    public class GarnetCircuitBreaker
+    private readonly ILogger<GarnetCircuitBreaker> _logger;
+    private readonly GarnetOptions _options;
+    private readonly ConcurrentDictionary<string, CircuitState> _circuits = new();
+    private readonly ConcurrentDictionary<string, int> _failureCount = new();
+    private readonly ConcurrentDictionary<string, DateTime> _lastFailure = new();
+    private readonly ConcurrentDictionary<string, DateTime> _openTime = new();
+
+    /// <summary>
+    /// Initializes a new instance of the GarnetCircuitBreaker
+    /// </summary>
+    /// <param name="options">Configuration options</param>
+    /// <param name="logger">Logger instance</param>
+    public GarnetCircuitBreaker(IOptions<GarnetOptions> options, ILogger<GarnetCircuitBreaker> logger)
     {
-        private readonly ILogger<GarnetCircuitBreaker> _logger;
-        private readonly AsyncCircuitBreakerPolicy _circuitBreaker;
+        _options = options.Value;
+        _logger = logger;
+    }
 
-        public GarnetCircuitBreaker(ILogger<GarnetCircuitBreaker> logger)
+    /// <summary>
+    /// Executes an action with circuit breaker protection
+    /// </summary>
+    /// <typeparam name="T">Return type of the action</typeparam>
+    /// <param name="action">Action to execute</param>
+    /// <param name="circuitKey">Optional circuit key for separate circuit breakers</param>
+    /// <returns>Result of the action</returns>
+    public async Task<T> ExecuteAsync<T>(Func<Task<T>> action, string circuitKey = "default")
+    {
+        if (IsCircuitOpen(circuitKey))
         {
-            _logger = logger;
-            _circuitBreaker = Policy
-                .Handle<RedisException>()
-                .CircuitBreakerAsync(
-                    exceptionsAllowedBeforeBreaking: 3,
-                    durationOfBreak: TimeSpan.FromSeconds(30),
-                    onBreak: (ex, duration) =>
-                    {
-                        _logger.LogError(ex, "Circuit breaker opened for {Duration}s", duration.TotalSeconds);
-                    },
-                    onReset: () =>
-                    {
-                        _logger.LogInformation("Circuit breaker reset");
-                    });
+            _logger.LogWarning("Circuit {CircuitKey} is open, operation rejected", circuitKey);
+            throw new CircuitBreakerOpenException($"Circuit {circuitKey} is open");
         }
 
-        public async Task<T> ExecuteAsync<T>(Func<Task<T>> action)
+        try
         {
-            return await _circuitBreaker.ExecuteAsync(action);
+            T result = await action();
+            ResetFailureCount(circuitKey);
+            return result;
         }
+        catch (Exception ex)
+        {
+            IncrementFailureCount(circuitKey);
+            _logger.LogError(ex, "Operation failed for circuit {CircuitKey}", circuitKey);
+            throw;
+        }
+    }
+
+    private bool IsCircuitOpen(string circuitKey)
+    {
+        CircuitState currentState = _circuits.GetOrAdd(circuitKey, CircuitState.Closed);
+        if (currentState == CircuitState.Open)
+        {
+            if (_openTime.TryGetValue(circuitKey, out DateTime openTime))
+            {
+                if (DateTime.UtcNow - openTime > _options.CircuitBreaker.BreakDuration)
+                {
+                    // Try to move to half-open state
+                    _circuits.TryUpdate(circuitKey, CircuitState.HalfOpen, CircuitState.Open);
+                    _logger.LogInformation("Circuit {CircuitKey} moved to half-open state", circuitKey);
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void IncrementFailureCount(string circuitKey)
+    {
+        int failures = _failureCount.AddOrUpdate(circuitKey, 1, (_, count) => count + 1);
+        _lastFailure.AddOrUpdate(circuitKey, DateTime.UtcNow, (_, _) => DateTime.UtcNow);
+
+        if (failures >= _options.CircuitBreaker.FailureThreshold)
+        {
+            _circuits.TryUpdate(circuitKey, CircuitState.Open, CircuitState.Closed);
+            _openTime.AddOrUpdate(circuitKey, DateTime.UtcNow, (_, _) => DateTime.UtcNow);
+            _logger.LogWarning("Circuit {CircuitKey} opened due to {FailureCount} failures", circuitKey, failures);
+        }
+    }
+
+    private void ResetFailureCount(string circuitKey)
+    {
+        _failureCount.TryRemove(circuitKey, out _);
+        if (_circuits.TryGetValue(circuitKey, out CircuitState state) && state == CircuitState.HalfOpen)
+        {
+            _circuits.TryUpdate(circuitKey, CircuitState.Closed, CircuitState.HalfOpen);
+            _logger.LogInformation("Circuit {CircuitKey} closed after successful operation", circuitKey);
+        }
+    }
+}
+
+/// <summary>
+/// Circuit breaker states
+/// </summary>
+public enum CircuitState
+{
+    /// <summary>
+    /// Circuit is closed and operating normally
+    /// </summary>
+    Closed,
+
+    /// <summary>
+    /// Circuit is open and rejecting requests
+    /// </summary>
+    Open,
+
+    /// <summary>
+    /// Circuit is allowing a limited number of requests to test if the system has recovered
+    /// </summary>
+    HalfOpen
+}
+
+/// <summary>
+/// Exception thrown when circuit breaker is open
+/// </summary>
+public class CircuitBreakerOpenException : Exception
+{
+    /// <summary>
+    /// Initializes a new instance of the CircuitBreakerOpenException
+    /// </summary>
+    /// <param name="message">Exception message</param>
+    public CircuitBreakerOpenException(string message) : base(message)
+    {
     }
 }
