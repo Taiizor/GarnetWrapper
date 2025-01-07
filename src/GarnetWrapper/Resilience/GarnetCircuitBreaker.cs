@@ -1,3 +1,4 @@
+using GarnetWrapper.Interfaces;
 using GarnetWrapper.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -8,7 +9,7 @@ namespace GarnetWrapper.Resilience;
 /// <summary>
 /// Circuit breaker implementation for Garnet cache operations
 /// </summary>
-public class GarnetCircuitBreaker
+public class GarnetCircuitBreaker : IGarnetCircuitBreaker
 {
     private readonly ILogger<GarnetCircuitBreaker> _logger;
     private readonly GarnetOptions _options;

@@ -16,27 +16,37 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
 
     public GarnetClientIntegrationTests()
     {
-        OptionsWrapper<GarnetOptions> options = new(new GarnetOptions
+        try
         {
-            ConnectionString = "localhost:6379",
-            DatabaseId = 1, // Use a different database for integration tests
-            EnableCompression = true,
-            DefaultExpiry = TimeSpan.FromMinutes(5),
-            MaxRetries = 3,
-            RetryTimeout = 1000
-        });
+            var options = new OptionsWrapper<GarnetOptions>(new GarnetOptions
+            {
+                ConnectionString = "localhost:6379",
+                DatabaseId = 1, // Use a different database for integration tests
+                EnableCompression = true,
+                DefaultExpiry = TimeSpan.FromMinutes(5),
+                MaxRetries = 3,
+                RetryTimeout = 1000
+            });
 
-        ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
+            ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder.AddConsole();
+                builder.AddDebug();
+            });
+
+            _logger = loggerFactory.CreateLogger<GarnetClient>();
+            var circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
+            _circuitBreaker = new GarnetCircuitBreaker(options, circuitBreakerLogger);
+            _metrics = new GarnetMetrics();
+            _client = new GarnetClient(options, _logger, _circuitBreaker, _metrics);
+
+            // Test Redis connection
+            _client.ExistsAsync("test").Wait();
+        }
+        catch (Exception ex)
         {
-            builder.AddConsole();
-            builder.AddDebug();
-        });
-
-        _logger = loggerFactory.CreateLogger<GarnetClient>();
-        ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
-        _circuitBreaker = new GarnetCircuitBreaker(options, circuitBreakerLogger);
-        _metrics = new GarnetMetrics();
-        _client = new GarnetClient(options, _logger, _circuitBreaker, _metrics);
+            throw new SkipException("Redis server is not available. Integration tests will be skipped.", ex);
+        }
     }
 
     public async Task InitializeAsync()

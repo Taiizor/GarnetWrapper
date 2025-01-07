@@ -24,7 +24,7 @@ public class GarnetClient : IGarnetClient
     private readonly ConnectionMultiplexer _connection;
     private readonly IDatabase _db;
     private readonly GarnetLogger _logger;
-    private readonly GarnetCircuitBreaker _circuitBreaker;
+    private readonly IGarnetCircuitBreaker _circuitBreaker;
     private readonly GarnetMetrics _metrics;
     private readonly GarnetOptions _options;
     private readonly JsonSerializerOptions _jsonOptions;
@@ -42,7 +42,7 @@ public class GarnetClient : IGarnetClient
     public GarnetClient(
         IOptions<GarnetOptions> options,
         ILogger<GarnetClient> logger,
-        GarnetCircuitBreaker circuitBreaker,
+        IGarnetCircuitBreaker circuitBreaker,
         GarnetMetrics metrics)
     {
         _options = options.Value;
