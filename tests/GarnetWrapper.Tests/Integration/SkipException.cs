@@ -21,5 +21,5 @@ namespace GarnetWrapper.Tests.Integration
         public SkipException(string message, Exception innerException) : base(message, innerException)
         {
         }
-    } 
+    }
 }

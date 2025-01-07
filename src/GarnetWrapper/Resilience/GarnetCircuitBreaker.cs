@@ -9,25 +9,18 @@ namespace GarnetWrapper.Resilience;
 /// <summary>
 /// Circuit breaker implementation for Garnet cache operations
 /// </summary>
-public class GarnetCircuitBreaker : IGarnetCircuitBreaker
+/// <remarks>
+/// Initializes a new instance of the GarnetCircuitBreaker
+/// </remarks>
+/// <param name="options">Configuration options</param>
+/// <param name="logger">Logger instance</param>
+public class GarnetCircuitBreaker(IOptions<GarnetOptions> options, ILogger<GarnetCircuitBreaker> logger) : IGarnetCircuitBreaker
 {
-    private readonly ILogger<GarnetCircuitBreaker> _logger;
-    private readonly GarnetOptions _options;
+    private readonly GarnetOptions _options = options.Value;
     private readonly ConcurrentDictionary<string, CircuitState> _circuits = new();
     private readonly ConcurrentDictionary<string, int> _failureCount = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastFailure = new();
     private readonly ConcurrentDictionary<string, DateTime> _openTime = new();
-
-    /// <summary>
-    /// Initializes a new instance of the GarnetCircuitBreaker
-    /// </summary>
-    /// <param name="options">Configuration options</param>
-    /// <param name="logger">Logger instance</param>
-    public GarnetCircuitBreaker(IOptions<GarnetOptions> options, ILogger<GarnetCircuitBreaker> logger)
-    {
-        _options = options.Value;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Executes an action with circuit breaker protection
@@ -40,7 +33,7 @@ public class GarnetCircuitBreaker : IGarnetCircuitBreaker
     {
         if (IsCircuitOpen(circuitKey))
         {
-            _logger.LogWarning("Circuit {CircuitKey} is open, operation rejected", circuitKey);
+            logger.LogWarning("Circuit {CircuitKey} is open, operation rejected", circuitKey);
             throw new CircuitBreakerOpenException($"Circuit {circuitKey} is open");
         }
 
@@ -53,7 +46,7 @@ public class GarnetCircuitBreaker : IGarnetCircuitBreaker
         catch (Exception ex)
         {
             IncrementFailureCount(circuitKey);
-            _logger.LogError(ex, "Operation failed for circuit {CircuitKey}", circuitKey);
+            logger.LogError(ex, "Operation failed for circuit {CircuitKey}", circuitKey);
             throw;
         }
     }
@@ -69,7 +62,7 @@ public class GarnetCircuitBreaker : IGarnetCircuitBreaker
                 {
                     // Try to move to half-open state
                     _circuits.TryUpdate(circuitKey, CircuitState.HalfOpen, CircuitState.Open);
-                    _logger.LogInformation("Circuit {CircuitKey} moved to half-open state", circuitKey);
+                    logger.LogInformation("Circuit {CircuitKey} moved to half-open state", circuitKey);
                     return false;
                 }
             }
@@ -87,7 +80,7 @@ public class GarnetCircuitBreaker : IGarnetCircuitBreaker
         {
             _circuits.TryUpdate(circuitKey, CircuitState.Open, CircuitState.Closed);
             _openTime.AddOrUpdate(circuitKey, DateTime.UtcNow, (_, _) => DateTime.UtcNow);
-            _logger.LogWarning("Circuit {CircuitKey} opened due to {FailureCount} failures", circuitKey, failures);
+            logger.LogWarning("Circuit {CircuitKey} opened due to {FailureCount} failures", circuitKey, failures);
         }
     }
 
@@ -97,7 +90,7 @@ public class GarnetCircuitBreaker : IGarnetCircuitBreaker
         if (_circuits.TryGetValue(circuitKey, out CircuitState state) && state == CircuitState.HalfOpen)
         {
             _circuits.TryUpdate(circuitKey, CircuitState.Closed, CircuitState.HalfOpen);
-            _logger.LogInformation("Circuit {CircuitKey} closed after successful operation", circuitKey);
+            logger.LogInformation("Circuit {CircuitKey} closed after successful operation", circuitKey);
         }
     }
 }

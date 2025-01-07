@@ -1,3 +1,4 @@
+using GarnetWrapper.Interfaces;
 using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
 using GarnetWrapper.Resilience;
@@ -18,14 +19,20 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         try
         {
-            var options = new OptionsWrapper<GarnetOptions>(new GarnetOptions
+            OptionsWrapper<GarnetOptions> options = new(new GarnetOptions
             {
                 ConnectionString = "localhost:6379",
-                DatabaseId = 1, // Use a different database for integration tests
+                DatabaseId = 0, // Varsayılan veritabanını kullanıyoruz
                 EnableCompression = true,
                 DefaultExpiry = TimeSpan.FromMinutes(5),
                 MaxRetries = 3,
-                RetryTimeout = 1000
+                RetryTimeout = 1000,
+                CircuitBreaker = new CircuitBreakerOptions
+                {
+                    FailureThreshold = 3,
+                    BreakDuration = TimeSpan.FromSeconds(10),
+                    MinimumThroughput = 2
+                }
             });
 
             ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
@@ -35,13 +42,40 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
             });
 
             _logger = loggerFactory.CreateLogger<GarnetClient>();
-            var circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
+            ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
             _circuitBreaker = new GarnetCircuitBreaker(options, circuitBreakerLogger);
             _metrics = new GarnetMetrics();
-            _client = new GarnetClient(options, _logger, _circuitBreaker, _metrics);
 
-            // Test Redis connection
-            _client.ExistsAsync("test").Wait();
+            // Try to connect to Redis with retry
+            int retryCount = 0;
+            const int maxRetries = 3;
+            Exception lastException = null;
+
+            while (retryCount < maxRetries)
+            {
+                try
+                {
+                    _client = new GarnetClient(options, _logger, _circuitBreaker, _metrics);
+                    
+                    // Test connection with a simple SET operation
+                    var testKey = "integration-test:connection-test";
+                    _client.SetAsync(testKey, "test").Wait();
+                    _client.DeleteAsync(testKey).Wait();
+                    return; // Connection successful
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    _logger.LogWarning(ex, "Failed to connect to Redis (attempt {RetryCount}/{MaxRetries})", retryCount + 1, maxRetries);
+                    retryCount++;
+                    if (retryCount < maxRetries)
+                    {
+                        Thread.Sleep(1000 * retryCount); // Exponential backoff
+                    }
+                }
+            }
+
+            throw new SkipException($"Redis server is not available after {maxRetries} attempts. Integration tests will be skipped.", lastException);
         }
         catch (Exception ex)
         {
@@ -91,7 +125,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     public async Task Compression_ShouldWork()
     {
         // Arrange
-        var largeObject = new
+        var largeObject = new TestLargeObject
         {
             Id = 1,
             Name = "Test",
@@ -101,12 +135,22 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
 
         // Act
         await _client.SetAsync("integration-test:compressed", largeObject);
-        dynamic result = await _client.GetAsync<dynamic>("integration-test:compressed");
+        var result = await _client.GetAsync<TestLargeObject>("integration-test:compressed");
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal(1, (int)result.Id);
-        Assert.Equal("Test", (string)result.Name);
+        Assert.Equal(1, result.Id);
+        Assert.Equal("Test", result.Name);
+        Assert.Equal(1000, result.Description.Length);
+        Assert.Equal(1000, result.Data.Count);
+    }
+
+    public class TestLargeObject
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public List<string> Data { get; set; }
     }
 
     [Fact]
@@ -114,27 +158,35 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
     {
         // Arrange
         int failureCount = 0;
+        var badOptions = new OptionsWrapper<GarnetOptions>(new GarnetOptions
+        {
+            ConnectionString = "nonexistent:6379",
+            DatabaseId = 0,
+            RetryTimeout = 100, // Kısa timeout
+            MaxRetries = 1, // Tek deneme
+            CircuitBreaker = new CircuitBreakerOptions
+            {
+                FailureThreshold = 2, // 2 hatadan sonra devre kesici açılsın
+                BreakDuration = TimeSpan.FromSeconds(1),
+                MinimumThroughput = 1
+            }
+        });
 
-        // Act & Assert
+        ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        ILogger<GarnetClient> badLogger = loggerFactory.CreateLogger<GarnetClient>();
+        ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
+        IGarnetCircuitBreaker badCircuitBreaker = new GarnetCircuitBreaker(badOptions, circuitBreakerLogger);
+        IGarnetMetrics badMetrics = new GarnetMetrics();
+
+        // Act
+        using var badClient = new GarnetClient(badOptions, badLogger, badCircuitBreaker, badMetrics);
+        
         for (int i = 0; i < 10; i++)
         {
             try
             {
-                // Try to access a non-existent Redis instance
-                OptionsWrapper<GarnetOptions> badOptions = new(new GarnetOptions
-                {
-                    ConnectionString = "nonexistent:6379",
-                    DatabaseId = 1
-                });
-
-                ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-                ILogger<GarnetClient> badLogger = loggerFactory.CreateLogger<GarnetClient>();
-                ILogger<GarnetCircuitBreaker> circuitBreakerLogger = loggerFactory.CreateLogger<GarnetCircuitBreaker>();
-                GarnetCircuitBreaker badCircuitBreaker = new(badOptions, circuitBreakerLogger);
-                GarnetMetrics badMetrics = new();
-
-                GarnetClient badClient = new(badOptions, badLogger, badCircuitBreaker, badMetrics);
-                await badClient.SetAsync("integration-test:key", "value");
+                await badClient.SetAsync("test-key", "test-value");
+                await Task.Delay(100); // Kısa bekleme
             }
             catch
             {
@@ -142,8 +194,9 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
             }
         }
 
-        // Circuit should be open after multiple failures
-        Assert.True(failureCount < 10);
+        // Assert
+        Assert.True(failureCount > 0, "En az bir hata olmalı");
+        Assert.True(failureCount < 10, "Devre kesici devreye girmeli ve tüm istekler hata vermemeli");
     }
 
     [Fact]
@@ -181,7 +234,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         // Arrange
         const string lockKey = "integration-test:lock";
         const string counterKey = "integration-test:counter";
-        await _client.SetAsync(counterKey, 0);
+        await _client.SetAsync(counterKey, 0L);
 
         List<Task> tasks = new();
         Random random = new();
@@ -217,7 +270,7 @@ public class GarnetClientIntegrationTests : IAsyncLifetime
         await Task.WhenAll(tasks);
 
         // Assert
-        int finalCount = await _client.GetAsync<int>(counterKey);
-        Assert.Equal(100, finalCount); // 10 tasks * 10 increments each
+        long finalCount = await _client.GetAsync<long>(counterKey);
+        Assert.Equal(100L, finalCount); // 10 tasks * 10 increments each
     }
 }

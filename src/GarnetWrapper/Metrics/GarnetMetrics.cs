@@ -2,61 +2,57 @@ using App.Metrics;
 using App.Metrics.Counter;
 using App.Metrics.Timer;
 
-namespace GarnetWrapper.Metrics
+namespace GarnetWrapper.Metrics;
+
+public interface IGarnetMetrics
 {
-    public class GarnetMetrics
+    IDisposable MeasureOperation(string operationName);
+    void RecordOperation(string operationName);
+}
+
+public class GarnetMetrics : IGarnetMetrics
+{
+    private readonly IMetrics _metrics;
+    private readonly TimerOptions _operationTimer;
+
+    public GarnetMetrics()
     {
-        private readonly IMetrics _metrics;
-        private readonly CounterOptions _operationCounter;
-        private readonly TimerOptions _operationTimer;
+        _metrics = new MetricsBuilder()
+            .Configuration.Configure(options =>
+            {
+                options.AddAppTag("GarnetWrapper");
+            })
+            .Build();
 
-        public GarnetMetrics()
+        _operationTimer = new TimerOptions
         {
-            _metrics = new MetricsBuilder()
-                .Configuration.Configure(options =>
-                {
-                    options.AddEnvTag();
-                    options.AddServerTag();
-                })
-                .Build();
+            Name = "Garnet Operation Timer",
+            MeasurementUnit = Unit.Calls,
+            DurationUnit = TimeUnit.Milliseconds,
+            RateUnit = TimeUnit.Seconds
+        };
+    }
 
-            _operationCounter = new CounterOptions
-            {
-                Name = "garnet_operations",
-                MeasurementUnit = Unit.Items,
-                Context = "Garnet.Operations"
-            };
-
-            _operationTimer = new TimerOptions
-            {
-                Name = "garnet_operation_duration",
-                MeasurementUnit = Unit.Items,
-                DurationUnit = TimeUnit.Milliseconds,
-                RateUnit = TimeUnit.Milliseconds,
-                Context = "Garnet.Operations"
-            };
-        }
-
-        public void RecordOperation(string operation)
+    public virtual IDisposable MeasureOperation(string operationName)
+    {
+        TimerOptions timerOptions = new()
         {
-            if (string.IsNullOrEmpty(operation))
-            {
-                return;
-            }
+            Name = _operationTimer.Name,
+            MeasurementUnit = _operationTimer.MeasurementUnit,
+            DurationUnit = _operationTimer.DurationUnit,
+            RateUnit = _operationTimer.RateUnit,
+            Tags = new MetricTags("operation", operationName)
+        };
+        return _metrics.Measure.Timer.Time(timerOptions);
+    }
 
-            MetricTags tags = new(new[] { "operation" }, new[] { operation });
-            _metrics.Measure.Counter.Increment(_operationCounter, tags);
-        }
-
-        public IDisposable MeasureOperation(string operation)
+    public virtual void RecordOperation(string operationName)
+    {
+        _metrics.Measure.Counter.Increment(new CounterOptions
         {
-            if (string.IsNullOrEmpty(operation))
-            {
-                return null;
-            }
-
-            MetricTags tags = new(new[] { "operation" }, new[] { operation });
-            return _metrics.Measure.Timer.Time(_operationTimer, tags);
-        }
+            Name = "Garnet Operation Counter",
+            MeasurementUnit = Unit.Calls,
+            Tags = new MetricTags("operation", operationName)
+        });
     }
 }

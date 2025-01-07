@@ -4,6 +4,7 @@ using GarnetWrapper.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
+using StackExchange.Redis;
 
 namespace GarnetWrapper.Tests
 {
@@ -12,7 +13,7 @@ namespace GarnetWrapper.Tests
         private readonly Mock<IOptions<GarnetOptions>> _optionsMock;
         private readonly Mock<ILogger<GarnetClient>> _loggerMock;
         private readonly Mock<IGarnetCircuitBreaker> _circuitBreakerMock;
-        private readonly Mock<GarnetMetrics> _metricsMock;
+        private readonly Mock<IGarnetMetrics> _metricsMock;
         private readonly GarnetClient _client;
 
         public GarnetClientTests()
@@ -30,13 +31,25 @@ namespace GarnetWrapper.Tests
 
             _loggerMock = new Mock<ILogger<GarnetClient>>();
             _circuitBreakerMock = new Mock<IGarnetCircuitBreaker>();
-            _metricsMock = new Mock<GarnetMetrics>();
+            _metricsMock = new Mock<IGarnetMetrics>();
 
             _circuitBreakerMock.Setup(x => x.ExecuteAsync(It.IsAny<Func<Task<bool>>>(), It.IsAny<string>()))
                 .Returns<Func<Task<bool>>, string>((func, _) => func());
 
             _circuitBreakerMock.Setup(x => x.ExecuteAsync(It.IsAny<Func<Task<string>>>(), It.IsAny<string>()))
                 .Returns<Func<Task<string>>, string>((func, _) => func());
+
+            _circuitBreakerMock.Setup(x => x.ExecuteAsync(It.IsAny<Func<Task<long>>>(), It.IsAny<string>()))
+                .Returns<Func<Task<long>>, string>((func, _) => func());
+
+            _circuitBreakerMock.Setup(x => x.ExecuteAsync(It.IsAny<Func<Task<TestObject>>>(), It.IsAny<string>()))
+                .Returns<Func<Task<TestObject>>, string>((func, _) => func());
+
+            Mock<IDisposable> disposableMock = new();
+            _metricsMock.Setup(x => x.MeasureOperation(It.IsAny<string>()))
+                .Returns(disposableMock.Object);
+
+            _metricsMock.Setup(x => x.RecordOperation(It.IsAny<string>()));
 
             _client = new GarnetClient(
                 _optionsMock.Object,
@@ -170,7 +183,7 @@ namespace GarnetWrapper.Tests
         {
             // Arrange
             const string key = "counter";
-            await _client.SetAsync(key, "0");
+            await _client.SetAsync(key, 0);
 
             // Act
             long result = await _client.IncrementAsync(key);
@@ -184,7 +197,7 @@ namespace GarnetWrapper.Tests
         {
             // Arrange
             const string key = "counter";
-            await _client.SetAsync(key, "1");
+            await _client.SetAsync(key, 1);
 
             // Act
             long result = await _client.DecrementAsync(key);
@@ -200,11 +213,29 @@ namespace GarnetWrapper.Tests
             const string key = "lock-key";
             TimeSpan expiry = TimeSpan.FromSeconds(30);
 
+            // Mock Redis LockTakeAsync to return true
+            var mockDatabase = new Mock<IDatabase>();
+            mockDatabase.Setup(x => x.LockTakeAsync(
+                It.IsAny<RedisKey>(), 
+                It.IsAny<RedisValue>(), 
+                It.IsAny<TimeSpan>(), 
+                It.IsAny<CommandFlags>()))
+                .ReturnsAsync(true);
+
+            // Inject mock database into client
+            var field = typeof(GarnetClient).GetField("_db", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field.SetValue(_client, mockDatabase.Object);
+
             // Act
             bool result = await _client.LockAsync(key, expiry);
 
             // Assert
             Assert.True(result);
+            mockDatabase.Verify(x => x.LockTakeAsync(
+                It.Is<RedisKey>(k => k == key),
+                It.IsAny<RedisValue>(),
+                It.Is<TimeSpan>(t => t == expiry),
+                It.IsAny<CommandFlags>()), Times.Once);
         }
 
         [Fact]

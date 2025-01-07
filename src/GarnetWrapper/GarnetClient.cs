@@ -1,9 +1,7 @@
 namespace GarnetWrapper;
 using GarnetWrapper.Interfaces;
-using GarnetWrapper.Logging;
 using GarnetWrapper.Metrics;
 using GarnetWrapper.Options;
-using GarnetWrapper.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -23,14 +21,14 @@ public class GarnetClient : IGarnetClient
 {
     private readonly ConnectionMultiplexer _connection;
     private readonly IDatabase _db;
-    private readonly GarnetLogger _logger;
+    private readonly ILogger<GarnetClient> _logger;
     private readonly IGarnetCircuitBreaker _circuitBreaker;
-    private readonly GarnetMetrics _metrics;
-    private readonly GarnetOptions _options;
+    private readonly IGarnetMetrics _metrics;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks;
     private readonly ObjectPool<MemoryStream> _memoryStreamPool;
     private readonly Stopwatch _stopwatch;
+    private readonly IOptions<GarnetOptions> _options;
 
     /// <summary>
     /// Initializes a new instance of the GarnetClient
@@ -43,12 +41,12 @@ public class GarnetClient : IGarnetClient
         IOptions<GarnetOptions> options,
         ILogger<GarnetClient> logger,
         IGarnetCircuitBreaker circuitBreaker,
-        GarnetMetrics metrics)
+        IGarnetMetrics metrics)
     {
-        _options = options.Value;
-        _logger = new GarnetLogger(logger);
-        _circuitBreaker = circuitBreaker;
-        _metrics = metrics;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _circuitBreaker = circuitBreaker ?? throw new ArgumentNullException(nameof(circuitBreaker));
+        _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
         _locks = new ConcurrentDictionary<string, SemaphoreSlim>();
         _memoryStreamPool = new ObjectPool<MemoryStream>(() => new MemoryStream(), 50);
         _stopwatch = new Stopwatch();
@@ -59,11 +57,11 @@ public class GarnetClient : IGarnetClient
             WriteIndented = false
         };
 
-        ConfigurationOptions configOptions = ConfigurationOptions.Parse(_options.ConnectionString);
-        configOptions.ConnectTimeout = _options.RetryTimeout;
-        configOptions.SyncTimeout = _options.RetryTimeout;
-        configOptions.AsyncTimeout = _options.RetryTimeout;
-        configOptions.ConnectRetry = _options.MaxRetries;
+        ConfigurationOptions configOptions = ConfigurationOptions.Parse(_options.Value.ConnectionString);
+        configOptions.ConnectTimeout = _options.Value.RetryTimeout;
+        configOptions.SyncTimeout = _options.Value.RetryTimeout;
+        configOptions.AsyncTimeout = _options.Value.RetryTimeout;
+        configOptions.ConnectRetry = _options.Value.MaxRetries;
         configOptions.AbortOnConnectFail = false;
         configOptions.AllowAdmin = true;
         configOptions.KeepAlive = 60; // Keep connection alive
@@ -71,17 +69,18 @@ public class GarnetClient : IGarnetClient
         configOptions.ReconnectRetryPolicy = new ExponentialRetry(100);
 
         _connection = ConnectionMultiplexer.Connect(configOptions);
-        _db = _connection.GetDatabase(_options.DatabaseId);
+        _db = _connection.GetDatabase(_options.Value.DatabaseId);
 
         _connection.ConnectionFailed += (sender, args) =>
         {
-            _logger.LogConnectionState(args.EndPoint.ToString(), "Failed", args.FailureType.ToString());
+            _logger.LogError("Redis connection failed to {Endpoint}. Failure type: {FailureType}",
+                args.EndPoint.ToString(), args.FailureType.ToString());
             _metrics.RecordOperation("connection_failed");
         };
 
         _connection.ConnectionRestored += (sender, args) =>
         {
-            _logger.LogConnectionState(args.EndPoint.ToString(), "Connected");
+            _logger.LogInformation("Redis connection restored to {Endpoint}", args.EndPoint.ToString());
             _metrics.RecordOperation("connection_restored");
         };
     }
@@ -104,18 +103,24 @@ public class GarnetClient : IGarnetClient
             try
             {
                 string serialized = JsonSerializer.Serialize(value, _jsonOptions);
-                if (_options.EnableCompression)
+                if (_options.Value.EnableCompression)
                 {
                     serialized = await CompressAsync(serialized);
                 }
 
-                expiry ??= _options.DefaultExpiry;
+                expiry ??= _options.Value.DefaultExpiry;
                 bool result = await _db.StringSetAsync(key, serialized, expiry);
 
                 _metrics.RecordOperation("set_success");
                 _stopwatch.Stop();
-                _logger.LogCacheOperation("Set", key, result, _stopwatch.ElapsedMilliseconds);
-                _logger.LogPerformanceWarning("Set", key, _stopwatch.ElapsedMilliseconds, 100);
+                _logger.LogInformation("Cache SET operation completed for key {Key} in {ElapsedMs}ms. Success: {Result}",
+                    key, _stopwatch.ElapsedMilliseconds, result);
+
+                if (_stopwatch.ElapsedMilliseconds > 100)
+                {
+                    _logger.LogWarning("Cache SET operation for key {Key} took {ElapsedMs}ms which exceeds the warning threshold of 100ms",
+                        key, _stopwatch.ElapsedMilliseconds);
+                }
 
                 return result;
             }
@@ -148,21 +153,28 @@ public class GarnetClient : IGarnetClient
                 {
                     _metrics.RecordOperation("cache_miss");
                     _stopwatch.Stop();
-                    _logger.LogCacheOperation("Get", key, false, _stopwatch.ElapsedMilliseconds);
+                    _logger.LogInformation("Cache GET operation completed for key {Key} in {ElapsedMs}ms. Cache miss.",
+                        key, _stopwatch.ElapsedMilliseconds);
                     return default;
                 }
 
                 _metrics.RecordOperation("cache_hit");
                 string stringValue = value.ToString();
-                if (_options.EnableCompression)
+                if (_options.Value.EnableCompression)
                 {
                     stringValue = await DecompressAsync(stringValue);
                 }
 
                 T result = JsonSerializer.Deserialize<T>(stringValue, _jsonOptions);
                 _stopwatch.Stop();
-                _logger.LogCacheOperation("Get", key, true, _stopwatch.ElapsedMilliseconds);
-                _logger.LogPerformanceWarning("Get", key, _stopwatch.ElapsedMilliseconds, 50);
+                _logger.LogInformation("Cache GET operation completed for key {Key} in {ElapsedMs}ms. Cache hit.",
+                    key, _stopwatch.ElapsedMilliseconds);
+
+                if (_stopwatch.ElapsedMilliseconds > 50)
+                {
+                    _logger.LogWarning("Cache GET operation for key {Key} took {ElapsedMs}ms which exceeds the warning threshold of 50ms",
+                        key, _stopwatch.ElapsedMilliseconds);
+                }
 
                 return result;
             }
@@ -187,10 +199,11 @@ public class GarnetClient : IGarnetClient
         {
             bool result = await _db.KeyDeleteAsync(key);
             _stopwatch.Stop();
-            _logger.LogCacheOperation("Delete", key, result, _stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("Cache DELETE operation completed for key {Key} in {ElapsedMs}ms. Success: {Result}",
+                key, _stopwatch.ElapsedMilliseconds, result);
             if (result)
             {
-                _logger.LogEviction(key, "Manual deletion");
+                _logger.LogInformation("Key {Key} was manually deleted", key);
             }
             return result;
         }
@@ -272,12 +285,14 @@ public class GarnetClient : IGarnetClient
                 string lockValue = Guid.NewGuid().ToString();
                 bool result = await _db.LockTakeAsync(key, lockValue, expiryTime);
                 _stopwatch.Stop();
-                _logger.LogCacheOperation("Lock", key, result, _stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("Cache LOCK operation completed for key {Key} in {ElapsedMs}ms. Success: {Result}",
+                    key, _stopwatch.ElapsedMilliseconds, result);
                 return result;
             }
 
             _stopwatch.Stop();
-            _logger.LogCacheOperation("Lock", key, false, _stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("Cache LOCK operation failed for key {Key} in {ElapsedMs}ms. Timeout waiting for semaphore.",
+                key, _stopwatch.ElapsedMilliseconds);
             return false;
         }
         catch (Exception ex)
@@ -326,7 +341,8 @@ public class GarnetClient : IGarnetClient
             }
 
             _stopwatch.Stop();
-            _logger.LogBatchOperation("GetAllKeys", keys.Count, keys.Count, 0, _stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("Retrieved {KeyCount} keys matching pattern {Pattern} in {ElapsedMs}ms",
+                keys.Count, pattern, _stopwatch.ElapsedMilliseconds);
             return keys;
         }
         catch (Exception ex)
@@ -359,40 +375,16 @@ public class GarnetClient : IGarnetClient
         }
 
         _stopwatch.Stop();
-        _logger.LogBatchOperation("GetAll", keys.Count(), result.Count, failureCount, _stopwatch.ElapsedMilliseconds);
+        _logger.LogInformation("Batch GET operation completed. Total: {TotalKeys}, Success: {SuccessCount}, Failed: {FailureCount}, Time: {ElapsedMs}ms",
+            keys.Count(), result.Count, failureCount, _stopwatch.ElapsedMilliseconds);
         return result;
-    }
-
-    private async Task<string> CompressAsync(string data)
-    {
-        MemoryStream memoryStream = _memoryStreamPool.Get();
-        try
-        {
-            memoryStream.SetLength(0);
-            using (GZipStream gzipStream = new(memoryStream, CompressionLevel.Optimal, true))
-            using (StreamWriter writer = new(gzipStream))
-            {
-                await writer.WriteAsync(data);
-            }
-            return Convert.ToBase64String(memoryStream.ToArray());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error compressing data");
-            throw;
-        }
-        finally
-        {
-            _memoryStreamPool.Return(memoryStream);
-        }
     }
 
     private async Task<string> DecompressAsync(string compressedData)
     {
-        MemoryStream memoryStream = _memoryStreamPool.Get();
+        using var memoryStream = new MemoryStream();
         try
         {
-            memoryStream.SetLength(0);
             byte[] data = Convert.FromBase64String(compressedData);
             await memoryStream.WriteAsync(data, 0, data.Length);
             memoryStream.Position = 0;
@@ -406,9 +398,24 @@ public class GarnetClient : IGarnetClient
             _logger.LogError(ex, "Error decompressing data");
             throw;
         }
-        finally
+    }
+
+    private async Task<string> CompressAsync(string data)
+    {
+        using var memoryStream = new MemoryStream();
+        try
         {
-            _memoryStreamPool.Return(memoryStream);
+            using (GZipStream gzipStream = new(memoryStream, CompressionLevel.Optimal, true))
+            using (StreamWriter writer = new(gzipStream))
+            {
+                await writer.WriteAsync(data);
+            }
+            return Convert.ToBase64String(memoryStream.ToArray());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error compressing data");
+            throw;
         }
     }
 
